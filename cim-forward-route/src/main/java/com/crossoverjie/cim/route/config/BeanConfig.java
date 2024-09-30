@@ -1,13 +1,18 @@
 package com.crossoverjie.cim.route.config;
 
+import com.crossoverjie.cim.common.core.proxy.RpcProxyManager;
 import com.crossoverjie.cim.common.metastore.MetaStore;
 import com.crossoverjie.cim.common.metastore.ZkConfiguration;
 import com.crossoverjie.cim.common.metastore.ZkMetaStoreImpl;
+import com.crossoverjie.cim.common.pojo.CIMUserInfo;
 import com.crossoverjie.cim.common.route.algorithm.RouteHandle;
 import com.crossoverjie.cim.common.route.algorithm.consistenthash.AbstractConsistentHash;
+import com.crossoverjie.cim.server.api.ServerApi;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.common.cache.Weigher;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import org.I0Itec.zkclient.ZkClient;
@@ -21,7 +26,11 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.lang.reflect.Method;
+import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+
+import static com.crossoverjie.cim.route.constant.Constant.ACCOUNT_PREFIX;
 
 /**
  * Function:
@@ -35,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 public class BeanConfig {
 
 
-    @Autowired
+    @Resource
     private AppConfiguration appConfiguration;
 
 
@@ -49,7 +58,7 @@ public class BeanConfig {
                 .retryPolicy(retryPolicy)
                 .build());
         metaStore.listenServerList((root, currentChildren) -> {
-            log.info("Server list change, root=[{}], currentChildren=[{}]", root, currentChildren);
+            log.info("Server list change, root=[{}], current server list=[{}]", root, currentChildren);
         });
         return metaStore;
     }
@@ -104,5 +113,30 @@ public class BeanConfig {
 
         }
 
+    }
+
+    @Bean("userInfoCache")
+    public LoadingCache<Long, Optional<CIMUserInfo>> userInfoCache(RedisTemplate<String, String> redisTemplate) {
+        return CacheBuilder.newBuilder()
+                .initialCapacity(64)
+                .maximumSize(1024)
+                .concurrencyLevel(Runtime.getRuntime().availableProcessors())
+                .expireAfterWrite(10, TimeUnit.MINUTES)
+                .build(new CacheLoader<>() {
+                    @Override
+                    public Optional<CIMUserInfo> load(Long userId) throws Exception {
+                        String sendUserName = redisTemplate.opsForValue().get(ACCOUNT_PREFIX + userId);
+                        if (sendUserName == null) {
+                            return Optional.empty();
+                        }
+                        CIMUserInfo cimUserInfo = new CIMUserInfo(userId, sendUserName);
+                        return Optional.of(cimUserInfo);
+                    }
+                });
+    }
+      
+    @Bean
+    public ServerApi serverApi(OkHttpClient okHttpClient) {
+        return RpcProxyManager.create(ServerApi.class, okHttpClient);
     }
 }

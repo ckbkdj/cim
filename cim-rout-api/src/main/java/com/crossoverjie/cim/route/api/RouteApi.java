@@ -28,7 +28,7 @@ public interface RouteApi {
      * @return
      * @throws Exception
      */
-    BaseResponse<NULLBody> groupRoute(ChatReqVO groupReqVO) throws Exception;
+    BaseResponse<NULLBody> groupRoute(ChatReqVO groupReqVO);
 
     /**
      * Point to point chat
@@ -36,7 +36,7 @@ public interface RouteApi {
      * @return
      * @throws Exception
      */
-    BaseResponse<NULLBody> p2pRoute(P2PReqVO p2pRequest) throws Exception;
+    BaseResponse<NULLBody> p2pRoute(P2PReqVO p2pRequest);
 
 
     /**
@@ -46,7 +46,7 @@ public interface RouteApi {
      * @return
      * @throws Exception
      */
-    BaseResponse<NULLBody> offLine(ChatReqVO groupReqVO) throws Exception;
+    BaseResponse<NULLBody> offLine(ChatReqVO groupReqVO);
 
     /**
      * Login account

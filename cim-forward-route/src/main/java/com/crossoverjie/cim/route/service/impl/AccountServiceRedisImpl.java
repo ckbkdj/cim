@@ -14,23 +14,28 @@ import com.crossoverjie.cim.route.service.AccountService;
 import com.crossoverjie.cim.route.service.UserInfoCacheService;
 import com.crossoverjie.cim.server.api.ServerApi;
 import com.crossoverjie.cim.server.api.vo.req.SendMsgReqVO;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.crossoverjie.cim.common.enums.StatusEnum.OFF_LINE;
-import static com.crossoverjie.cim.route.constant.Constant.ACCOUNT_PREFIX;
-import static com.crossoverjie.cim.route.constant.Constant.ROUTE_PREFIX;
+import static com.crossoverjie.cim.route.constant.Constant.*;
 
 /**
  * Function:
@@ -43,14 +48,14 @@ import static com.crossoverjie.cim.route.constant.Constant.ROUTE_PREFIX;
 @Service
 public class AccountServiceRedisImpl implements AccountService {
 
-    @Autowired
+    @Resource
     private RedisTemplate<String, String> redisTemplate;
 
-    @Autowired
+    @Resource
     private UserInfoCacheService userInfoCacheService;
 
-    @Autowired
-    private OkHttpClient okHttpClient;
+    @Resource
+    private ServerApi serverApi;
 
     @Override
     public RegisterInfoResVO register(RegisterInfoResVO info) {
@@ -85,7 +90,7 @@ public class AccountServiceRedisImpl implements AccountService {
 
         //登录成功，保存登录状态
         boolean status = userInfoCacheService.saveAndCheckUserLoginStatus(loginReqVO.getUserId());
-        if (status == false) {
+        if (!status) {
             //重复登录
             return StatusEnum.REPEAT_LOGIN;
         }
@@ -132,7 +137,8 @@ public class AccountServiceRedisImpl implements AccountService {
         }
 
         RouteInfo parse = RouteInfoParseUtil.parse(value);
-        CIMServerResVO cimServerResVO = new CIMServerResVO(parse.getIp(), parse.getCimServerPort(), parse.getHttpPort());
+        CIMServerResVO cimServerResVO =
+                new CIMServerResVO(parse.getIp(), parse.getCimServerPort(), parse.getHttpPort());
         return cimServerResVO;
     }
 
@@ -140,30 +146,34 @@ public class AccountServiceRedisImpl implements AccountService {
         long userId = Long.valueOf(key.split(":")[1]);
         String value = redisTemplate.opsForValue().get(key);
         RouteInfo parse = RouteInfoParseUtil.parse(value);
-        CIMServerResVO cimServerResVO = new CIMServerResVO(parse.getIp(), parse.getCimServerPort(), parse.getHttpPort());
+        CIMServerResVO cimServerResVO =
+                new CIMServerResVO(parse.getIp(), parse.getCimServerPort(), parse.getHttpPort());
         routes.put(userId, cimServerResVO);
     }
 
 
     @Override
-    public void pushMsg(CIMServerResVO cimServerResVO, long sendUserId, ChatReqVO groupReqVO) throws Exception {
-        CIMUserInfo cimUserInfo = userInfoCacheService.loadUserInfoByUserId(sendUserId);
+    public void pushMsg(CIMServerResVO cimServerResVO, long sendUserId, ChatReqVO groupReqVO) {
+        Optional<CIMUserInfo> cimUserInfo = userInfoCacheService.loadUserInfoByUserId(sendUserId);
 
-        String url = "http://" + cimServerResVO.getIp() + ":" + cimServerResVO.getHttpPort();
-        ServerApi serverApi = RpcProxyManager.create(ServerApi.class, url, okHttpClient);
-        SendMsgReqVO vo = new SendMsgReqVO(cimUserInfo.getUserName() + ":" + groupReqVO.getMsg(), groupReqVO.getUserId());
-        serverApi.sendMsg(vo);
+        cimUserInfo.ifPresent(userInfo -> {
+            String url = "http://" + cimServerResVO.getIp() + ":" + cimServerResVO.getHttpPort();
+            SendMsgReqVO vo =
+                    new SendMsgReqVO(userInfo.getUserName() + ":" + groupReqVO.getMsg(), groupReqVO.getUserId());
+            serverApi.sendMsg(vo, url);
+
+        });
     }
 
     @Override
-    public void offLine(Long userId) throws Exception {
+    public void offLine(Long userId) {
 
-        // TODO: 2019-01-21 改为一个原子命令，以防数据一致性
+        DefaultRedisScript redisScript = new DefaultRedisScript();
+        redisScript.setScriptSource(new ResourceScriptSource(new ClassPathResource("lua/offLine.lua")));
 
-        //删除路由
-        redisTemplate.delete(ROUTE_PREFIX + userId);
-
-        //删除登录状态
-        userInfoCacheService.removeLoginStatus(userId);
+        redisTemplate.execute(redisScript,
+                Collections.singletonList(ROUTE_PREFIX + userId),
+                LOGIN_STATUS_PREFIX,
+                userId.toString());
     }
 }
